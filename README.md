@@ -38,12 +38,13 @@ few ophthalmologists — flagging patients who need urgent specialist referral
 ```
 project/
 ├── notebooks/
-│   └── 01_eda.ipynb                  # this phase — see below
+│   ├── 01_eda.ipynb
+│   └── 02_preprocess.ipynb
 ├── src/
-│   └── data_utils.py                 # reusable functions, imported by notebooks
-├── archive/                          # dataset (train/valid/test images + CSVs)
+│   ├── data_utils.py
+│   └── preprocessing.py
 ├── outputs/
-│   └── figures/                      # saved EDA charts
+│   └── figures/                      # EDA + preprocessing comparisons
 └── README.md
 ```
 
@@ -61,7 +62,7 @@ belongs to.
 | Check | Result |
 |---|---|
 | Missing / corrupted files | 0 / 0 — full integrity confirmed |
-| Duplicate images within train | 79 pairs found and de-duplicated |
+| Duplicate images within train | 79 pairs detected and documented |
 | Train↔Valid leaked images | 22 found and removed from train |
 | Train↔Test leaked images | 22 found and removed from train |
 
@@ -146,23 +147,49 @@ an unchecked hunch.
 
 ---
 
-## Decisions Carried Into Preprocessing
+## Preprocessing Summary (`02_preprocess.ipynb`) — Complete
 
-1. **Crop** to the circular retina region, standardize black border.
-2. **Pad-to-square before resize** (not center-crop) to avoid distorting
-   rectangular images or cutting off tissue.
-3. **Resize** to a fixed size (224×224 or 300×300 — final choice depends on
-   compute budget, see below).
-4. **Contrast enhancement (CLAHE)** worth testing — lesions are low-contrast
-   on some images.
-5. **Do not discard images** to fix class imbalance — handle via class
-   weights / focal loss / minority-class augmentation at training time.
-6. **Do not filter by blur** — keep as-is, revisit only via Grad-CAM later.
-7. **Rotation/flip augmentation** is safe (retinas have no fixed
-   orientation); be cautious with color-based augmentation since color may
-   carry diagnostic signal.
-8. **Evaluation metric:** QWK (primary) + per-class recall + confusion
-   matrix — not plain accuracy.
+The preprocessing stage converts the cleaned metadata into a reproducible TensorFlow input pipeline.
+
+### Final image pipeline
+
+`crop black border → pad to square → resize to 224×224 → CLAHE → BGR→RGB → EfficientNet input preprocessing`
+
+- **Black-border crop:** threshold-based foreground bounding box removes unnecessary outer black regions.
+- **Pad-to-square:** preserves retinal geometry instead of stretching rectangular images.
+- **Resize:** `224×224` with `INTER_AREA`; visual checks showed no obvious retinal distortion and small lesion-like details remained visible.
+- **CLAHE:** tested visually and retained; it improved vessel/structure contrast without visibly amplifying the padded black background.
+- **EfficientNet preprocessing:** `preprocess_input()` is retained for API consistency; in the current Keras EfficientNet implementation it acts as a no-op because rescaling is built into the model.
+
+### Training-only augmentation
+
+Conservative augmentation is applied only to the training set:
+
+- horizontal + vertical flips
+- mild rotation (`0.05`)
+- no color/brightness augmentation at this stage, to avoid disturbing potentially useful retinal signal
+
+### `tf.data` pipeline
+
+`load/process → cache → shuffle (train only) → batch → augment (train only) → prefetch`
+
+Caching is intentionally placed **before augmentation** so deterministic OpenCV preprocessing is reused across epochs while augmentation remains random. Final sanity check: batches have shape **`(16, 224, 224, 3)`** with label shape **`(16,)`**.
+
+### Class imbalance handling
+
+Balanced class weights were computed from the cleaned training labels rather than dropping rare-class images:
+
+| Grade | Class weight |
+|---|---:|
+| 0 | 0.403 |
+| 1 | 1.984 |
+| 2 | 0.736 |
+| 3 | 3.797 |
+| 4 | 2.543 |
+
+Rare grades therefore contribute more strongly to the training loss, especially Grade 3.
+
+---
 
 ## Environment Notes
 
@@ -179,9 +206,9 @@ an unchecked hunch.
 
 - [x] **Phase 1 — EDA** (`01_eda.ipynb`): integrity, imbalance, image
       properties, blur, color — complete, see summary above
-- [ ] **Phase 2 — Preprocessing pipeline** (`02_preprocessing_pipeline.ipynb`):
-      cropping, resizing, `tf.data` pipeline, augmentation, class-weight
-      computation
+- [x] **Phase 2 — Preprocessing pipeline** (`02_preprocess.ipynb`):
+      border cropping, pad-to-square, 224×224 resize, CLAHE, conservative augmentation,
+      `tf.data` pipeline, batch validation, and class-weight computation
 - [ ] **Phase 3 — Baseline training** (`03_baseline_training.ipynb`):
       transfer learning with EfficientNetB0/MobileNetV3, frozen backbone →
       fine-tune
