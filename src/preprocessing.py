@@ -102,6 +102,25 @@ def build_paths_labels(df, images_dir, id_col="id_code", label_col="diagnosis", 
     labels = df[label_col].values
     return paths, labels
 
+def build_oversampled_paths_labels(paths, labels, oversample_map):
+    """
+   increases EXPOSURE, not real diversity.
+   Intended to be used as an alternative to class_weight, not alongside it.
+    """
+    paths = np.array(paths)
+    labels = np.array(labels)
+ 
+    out_paths, out_labels = [], []
+    for cls in np.unique(labels):
+        mult = oversample_map.get(int(cls), 1)
+        cls_paths = paths[labels == cls]
+        cls_labels = labels[labels == cls]
+        out_paths.extend(np.tile(cls_paths, mult).tolist())
+        out_labels.extend(np.tile(cls_labels, mult).tolist())
+ 
+    return out_paths, out_labels
+
+
 def build_augmentation():
     """
     Train-only augmentation. Deliberately conservative: flips and mild
