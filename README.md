@@ -221,7 +221,7 @@ The two most severe errors (Grade 4→Grade 0) were **identical in both
 models** — same two images, same wrong prediction, near pixel-for-pixel
 identical Grad-CAM heatmaps:
 
-![Grade 4 to Grade 0 shortcut failure](outputs/figures/gradcam_true4_pred0.png)
+![Grade 4 to Grade 0 shortcut failure](outputs/figures/gradcam_true4pred0.png)
 
 Attention in both cases fixates tightly on the **optic disc** — a normal
 anatomical landmark, not disease tissue — rather than searching the retina
@@ -237,7 +237,7 @@ The anchoring mechanism remains an open question, noted as future work.
 
 **Contrast — a genuinely correct Grade 4 case, for comparison:**
 
-![Correct Grade 4 Grad-CAM](outputs/figures/gradcam_true4_pred_correct.png)
+![Correct Grade 4 Grad-CAM](outputs/figures/gradcam_true4pred4.png)
 
 Attention here aligns with visible pathology (vessel proliferation, exudate
 regions) rather than a generic landmark — the qualitative difference
