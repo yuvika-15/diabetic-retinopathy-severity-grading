@@ -1,16 +1,22 @@
+
 archive/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+
+# Environment / OS files
+.env
+.DS_Store
+
 *.png
 !outputs/*.png
-__pycache__/
-.ipynb_checkpoints/
-*.pyc
 
-# Add these:
+# Model checkpoints / weights
 *.h5
 *.keras
 *.pt
 *.pth
-outputs/models/
-.DS_Store
-.env
-venv/
+
+# Keep selected final model
+!outputs/models/phase2_finetuned_oversampled.keras
