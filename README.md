@@ -1,10 +1,15 @@
 # Diabetic Retinopathy Severity Grading + Lesion Localization
 
 A deep learning project to classify diabetic retinopathy (DR) severity from
-retinal fundus photographs, with interpretability (Grad-CAM) used to verify
-the model is looking at real lesions rather than confounding image
-properties — framed as a clinical triage system (refer / no-refer), not just
-a 5-class classifier.
+retinal fundus photographs, with interpretability (Grad-CAM) used to
+investigate whether the model is looking at real lesions or confounding
+image properties — framed as a clinical triage system (refer / no-refer),
+not just a 5-class classifier.
+
+**[Live demo](#)** — replace with your deployed Streamlit/HF Spaces link
+
+![Demo screenshot](outputs/figures/demo_result.png)
+![Demo screenshot](outputs/figures/demo_result_2.png)
 
 ## Problem
 
@@ -29,53 +34,55 @@ few ophthalmologists — flagging patients who need urgent specialist referral
 - **Splits:** pre-defined train (2930 images) / valid (366) / test (366),
   each with its own `id_code` → `diagnosis` (0-4) CSV
 - **No patient ID field available** in this public version — a strict
-  patient-level leakage check isn't possible with the given metadata. Noted
-  as a documented limitation; duplicate-image detection (below) is used as
-  the practical substitute.
+  patient-level leakage check isn't possible with the given metadata.
+  Duplicate-image detection (below) is used as the practical substitute.
 
 ## Repo Structure
 
 ```
 project/
-├── notebooks/
-│   ├── 01_eda.ipynb
-│   └── 02_preprocess.ipynb
+|── 01_eda.ipynb
+│── 02_preprocess.ipynb
+│── 03_model_training.ipynb
+│── 04_class_imbalance_experiment.ipynb
 ├── src/
 │   ├── data_utils.py
 │   └── preprocessing.py
 ├── outputs/
-│   └── figures/                      # EDA + preprocessing comparisons
+│   ├── figures/
+│   └── models/
+│   └── gradcam_based_on_classweight/
+│   └── gradcam_based_on_oversampling/
+├── app.py                  # Streamlit deployment demo
+├── requirements.txt
+├── requirements-app.txt    # only for streamlit purpose 
 └── README.md
 ```
 
-**Convention going forward:** any function used in more than one place lives
-in `src/`, imported into notebooks — not re-pasted. One-off investigative
-code (answers a single question once) stays inline in the notebook it
-belongs to.
+**Convention:** any function used in more than one place lives in `src/`,
+imported into notebooks — not re-pasted. One-off investigative code stays
+inline in the notebook it belongs to.
 
 ---
 
-## EDA Summary (`01_eda.ipynb`) — Complete
+## 1. EDA (`01_eda.ipynb`)
 
-### 1. Data integrity
+### Data integrity
 
 | Check | Result |
 |---|---|
-| Missing / corrupted files | 0 / 0 — full integrity confirmed |
-| Duplicate images within train | 79 pairs detected and documented |
-| Train↔Valid leaked images | 22 found and removed from train |
-| Train↔Test leaked images | 22 found and removed from train |
+| Missing / corrupted files | 0 / 0 |
+| Duplicate images within train | 79 pairs found and de-duplicated |
+| Train↔Valid / Train↔Test leaks | 22 + 22 found and removed from train |
 
-**Why this mattered:** ~6% of valid/test had a byte-identical duplicate
-sitting in train. Left unfixed, validation/test metrics would have been
-artificially inflated by memorization rather than genuine generalization.
-Leaked images were removed from `train` only, preserving valid/test as
-untouched evaluation sets. Post-cleaning training set: **2,930 → ~2,886**
-images (all 5 classes retained, no class was disproportionately gutted).
+~6% of valid/test had a byte-identical duplicate in train — left unfixed,
+this would have inflated validation/test metrics via memorization rather
+than genuine generalization. Leaks were removed from `train` only.
+Post-cleaning training set: 2,930 → 2,886 images.
 
-### 2. Class imbalance
+### Class imbalance
 
-| Grade | Count (post-cleaning) | % of data | Imbalance ratio vs. majority |
+| Grade | Count | % of data | Imbalance ratio |
 |---|---|---|---|
 | 0 | 1432 | ~53% | 1.00x |
 | 1 | 291 | ~11% | 4.92x |
@@ -83,151 +90,216 @@ images (all 5 classes retained, no class was disproportionately gutted).
 | 3 | 152 | ~5.6% | **9.42x** |
 | 4 | 227 | ~8.4% | 6.31x |
 
-**Key tension:** grades 3 and 4 (severe / proliferative — the clinically
-most important cases to catch) are also the rarest. Accuracy alone will be
-a misleading metric. **Decision (for the modeling phase): do not drop data
-to balance classes** — rare-class images are too valuable. Instead, handle
-imbalance at the training level (class weights, focal loss, or targeted
-augmentation of minority classes), and evaluate using **Quadratic Weighted
-Kappa (QWK)** plus per-class recall, not plain accuracy.
+Grades 3-4 — the clinically most important cases — are also the rarest.
+**Decision: never drop data to balance classes**; handle imbalance at the
+training level instead, and evaluate with QWK + per-class recall, not
+accuracy.
 
-### 3. Image properties
+### Blur / sharpness — real, flagged finding
 
-- **Resolution:** highly variable — 819×614 up to 4288×2848 (mean ~1970×1505).
-  Confirms resizing to a fixed input size (e.g. 224×224 or 300×300) is
-  mandatory; note this discards more detail from the largest images than
-  the smallest.
-- **Channels:** consistently RGB (3 channels) across the board — no
-  grayscale/alpha surprises to handle.
-- **Aspect ratio:** ranges from ~1.0 (square) to ~1.51 (rectangular). A
-  naive resize-to-square will distort the more rectangular images —
-  **pad-to-square before resizing is safer than center-crop**, since
-  cropping risks cutting off real retinal tissue at the edges.
-- **Border/framing:** inconsistent across images — some show the full
-  circular retina with black padding, others are cropped tight into the
-  tissue. Needs a consistent cropping strategy before resizing.
-
-### 4. Blur / sharpness — real, flagged finding
-
-Using Laplacian variance (edge-sharpness proxy) across train/valid/test:
-
-| Grade | Mean blur score (train) |
+| Grade | Mean blur score (Laplacian variance) |
 |---|---|
 | 0 | ~37 |
-| 1 | ~14 |
-| 2 | ~13 |
-| 3 | ~14 |
-| 4 | ~15 |
+| 1-4 | ~13-15 |
 
-**Grade 0 (healthy) images are consistently ~2.5x sharper than every
-diseased class, across all three splits.** This is counter-intuitive
-(diseased retinas have more fine detail/lesions, so you'd expect them to
-score *higher*, not lower). Two possible explanations, not yet
-distinguished:
-1. Genuine signal — diabetic cataracts (a separate diabetes complication)
-   cause lens haze that correlates with disease severity.
-2. Confound — more severe cases may have been captured with different
-   equipment/protocol.
+Grade 0 images are consistently ~2.5x sharper than every diseased class,
+across train/valid/test — counter-intuitive, since diseased retinas have
+more fine detail. Flagged as a possible shortcut risk, carried into the
+Grad-CAM investigation (Section 4).
 
-**Decision: do NOT filter or drop images based on blur** — it may carry
-real diagnostic signal, and filtering risks disproportionately harming the
-already-rare grade 3 class. **Action for later:** explicitly check during
-Grad-CAM whether the model is keying off real lesions vs. overall image
-haze as a shortcut.
+### Color-channel hypothesis — tested, ruled out
 
-### 5. Color-channel hypothesis — tested, ruled out
-
-Initial visual impression: grade 0 looked more yellow, diseased grades more
-reddish. Quantitative per-channel (R/G/B) means across 300 samples did
-**not** show a consistent trend — R:G ratio stayed ~1.8-2.1 across all
-classes with no monotonic pattern by grade. Concluded this was
-sample-size-driven visual bias, not a true confound. Documented as a
-negative result — a deliberately tested and ruled-out hypothesis, not just
-an unchecked hunch.
+Visual impression (grade 0 = yellower) did not hold up quantitatively —
+R:G ratio stayed ~1.8-2.1 across all classes with no trend by grade.
+Documented as a deliberately tested, ruled-out hypothesis.
 
 ---
 
-## Preprocessing Summary (`02_preprocess.ipynb`) — Complete
+## 2. Preprocessing (`02_preprocess.ipynb`)
 
-The preprocessing stage converts the cleaned metadata into a reproducible TensorFlow input pipeline.
+**Pipeline:** `crop black border → pad to square → resize to 224×224 →
+CLAHE → BGR→RGB → EfficientNet input scaling`
 
-### Final image pipeline
+![Full pipeline before/after](outputs/figures/full_pipeline_before_after.png)
 
-`crop black border → pad to square → resize to 224×224 → CLAHE → BGR→RGB → EfficientNet input preprocessing`
+- **Crop + pad-to-square** instead of center-crop or stretch — preserves
+  all real tissue and avoids distorting the circular retina.
+- **CLAHE** tested visually and retained — improved vessel/lesion contrast
+  without amplifying noise in the black background.
 
-- **Black-border crop:** threshold-based foreground bounding box removes unnecessary outer black regions.
-- **Pad-to-square:** preserves retinal geometry instead of stretching rectangular images.
-- **Resize:** `224×224` with `INTER_AREA`; visual checks showed no obvious retinal distortion and small lesion-like details remained visible.
-- **CLAHE:** tested visually and retained; it improved vessel/structure contrast without visibly amplifying the padded black background.
-- **EfficientNet preprocessing:** `preprocess_input()` is retained for API consistency; in the current Keras EfficientNet implementation it acts as a no-op because rescaling is built into the model.
+![CLAHE before/after](outputs/figures/clahe_before_after.png)
 
-### Training-only augmentation
+- **`tf.data` pipeline:** `load/process → cache → shuffle (train) → batch →
+  augment (train) → prefetch`. Caching sits before augmentation so
+  deterministic OpenCV work is reused across epochs while augmentation
+  stays random.
+- **Augmentation:** flips + mild rotation only — no color/brightness
+  augmentation, since EDA flagged both blur and color as potentially
+  carrying real diagnostic signal.
 
-Conservative augmentation is applied only to the training set:
+---
 
-- horizontal + vertical flips
-- mild rotation (`0.05`)
-- no color/brightness augmentation at this stage, to avoid disturbing potentially useful retinal signal
+## 3. Modeling (`03_model_training.ipynb`)
 
-### `tf.data` pipeline
+**Architecture:** EfficientNetB0 (ImageNet pretrained) → GlobalAveragePooling
+→ Dropout → Dense(5, softmax).
 
-`load/process → cache → shuffle (train only) → batch → augment (train only) → prefetch`
+**Two-phase transfer learning:**
+1. **Phase 1** — frozen backbone, train head only (LR=1e-3)
+2. **Phase 2** — unfreeze last 30 layers, BatchNorm kept frozen, fine-tune
+   (LR=1e-5, `ReduceLROnPlateau`, `EarlyStopping`)
 
-Caching is intentionally placed **before augmentation** so deterministic OpenCV preprocessing is reused across epochs while augmentation remains random. Final sanity check: batches have shape **`(16, 224, 224, 3)`** with label shape **`(16,)`**.
+A bug was found and fixed mid-project: BatchNorm layers' `trainable` flag
+was unconditionally overwritten to `True` after being set `False` in the
+first fine-tuning attempt. Fixed (`if/else`, not two unconditional
+statements) and retrained cleanly before trusting any results.
 
-### Class imbalance handling
+**Baseline evaluation (class weights for imbalance):**
 
-Balanced class weights were computed from the cleaned training labels rather than dropping rare-class images:
+![Baseline confusion matrix](outputs/figures/06_confusion_matrix_baseline.png)
 
-| Grade | Class weight |
-|---|---:|
-| 0 | 0.403 |
-| 1 | 1.984 |
-| 2 | 0.736 |
-| 3 | 3.797 |
-| 4 | 2.543 |
+| Metric | Value |
+|---|---|
+| QWK | 0.826 |
+| Accuracy | 0.790 |
+| Grade 3 recall | 0.412 |
+| Grade 4 recall | 0.333 |
 
-Rare grades therefore contribute more strongly to the training loss, especially Grade 3.
+---
+
+## 4. Class Imbalance Experiment (`04_class_imbalance_experiment.ipynb`)
+
+**Single-variable ablation:** replaced class weights with moderate
+oversampling of Grades 3 (4x) and 4 (3x) — everything else (architecture,
+LR schedule, callbacks) held identical, to isolate the effect of the
+correction mechanism itself.
+
+![Oversampled confusion matrix](outputs/figures/07_confusion_matrix_oversampled.png)
+
+| Metric | Baseline (class weights) | Oversampled |
+|---|---|---|
+| QWK | 0.826 | **0.854** |
+| Accuracy | 0.790 | 0.809 |
+| Grade 0 recall | 0.975 | 0.985 |
+| Grade 1 recall | 0.667 | **0.333** |
+| Grade 2 recall | 0.655 | **0.805** |
+| Grade 3 recall | 0.412 | 0.353 |
+| Grade 4 recall | 0.333 | **0.424** |
+
+**Conclusion:** oversampling improved the headline metric and the most
+clinically critical class (Grade 4), and boosted Grade 2 substantially.
+It came at a real cost to Grade 1 recall — removing class weights took
+away Grade 1's only correction while it wasn't included in the
+oversampling target, leaving it under-protected relative to its larger
+neighbors. **Net decision: the oversampled model is carried forward** as
+the better fit for this project's triage framing (catching severe cases
+matters more than a missed mild case), with the Grade 1 regression
+documented as a known, explained trade-off rather than an unnoticed
+regression.
+
+*Known limitation of the method itself:* oversampling duplicates existing
+images (with fresh augmentation per repeat) — it adds exposure, not new
+information. This ceiling shows up directly in Section 5 below.
+
+---
+
+## 5. Interpretability — Grad-CAM (in `04_class_imbalance_experiment.ipynb`)
+
+Grad-CAM was used to investigate *why* the model fails, not just how often,
+focused on the most severe error type: Grade 4 (proliferative,
+sight-threatening) predicted as Grade 0 (no DR).
+
+**Two distinct failure modes were found, not one:**
+
+**A) Boundary-adjacent errors — fixed by oversampling.**
+Grade 4→Grade 1 misclassifications dropped from 6 to 3, and correct Grade 4
+predictions rose from 11 to 14, after oversampling. These were cases where
+the model was close to right and more exposure to the class was enough to
+shift the decision.
+
+**B) Anchored/shortcut errors — unaffected by oversampling.**
+The two most severe errors (Grade 4→Grade 0) were **identical in both
+models** — same two images, same wrong prediction, near pixel-for-pixel
+identical Grad-CAM heatmaps:
+
+![Grade 4 to Grade 0 shortcut failure](outputs/figures/gradcam_true4_pred0.png)
+
+Attention in both cases fixates tightly on the **optic disc** — a normal
+anatomical landmark, not disease tissue — rather than searching the retina
+for lesions. Tripling training exposure to Grade 4 had **zero effect** on
+these two cases, indicating the failure is a learned shortcut robust to
+more of the same kind of training signal, not a data-volume problem.
+
+**Hypothesis tested and ruled out:** checked whether these two images were
+unusually blurry (per the EDA blur finding). Blur scores were 16.4 and
+15.4 — squarely within the normal range for diseased grades (~13-15), far
+from Grade 0's ~37. **Blur is not the cause of this specific shortcut.**
+The anchoring mechanism remains an open question, noted as future work.
+
+**Contrast — a genuinely correct Grade 4 case, for comparison:**
+
+![Correct Grade 4 Grad-CAM](outputs/figures/gradcam_true4_pred_correct.png)
+
+Attention here aligns with visible pathology (vessel proliferation, exudate
+regions) rather than a generic landmark — the qualitative difference
+between this and the anchored failures above is the clearest evidence in
+the project that Grad-CAM is surfacing a real, meaningful distinction, not
+noise.
+
+**Overall interpretability conclusion:** the severity of a prediction error
+correlates with how localized vs. diffuse/anchored the model's attention
+is. Near-correct predictions show lesion-aligned attention; catastrophic
+errors show attention fixated on generic structures, resistant to the
+imbalance-correction technique tried here.
+
+---
+
+## 6. Deployment (`app.py`)
+
+A Streamlit demo: upload a fundus photo → preprocessed image + Grad-CAM
+overlay → predicted grade + class probabilities → referral flag → a
+plain-language interpretation that explicitly surfaces the model's known
+limitation on high-confidence "No DR" predictions.
+
+![Upload interface](outputs/figures/demo_screenshot_upload.png)
+
+Run locally: `streamlit run app.py`. Deployable free on Streamlit Community
+Cloud or Hugging Face Spaces (CPU-only hosting works fine — mixed precision
+was never actually active during training due to a policy-ordering detail,
+so the saved model is plain float32).
 
 ---
 
 ## Environment Notes
 
-- Training locally on an RTX 3050 (4GB VRAM laptop GPU).
-- Mixed precision (`mixed_float16`) enabled — roughly halves memory use,
-  supported natively on this GPU.
-- Backbone choice: start with EfficientNetB0 or MobileNetV3-Large (fits
-  comfortably in 4GB); avoid B3+ until a compute upgrade or Colab Pro.
-- Batch size: start at 16, drop to 8 if OOM.
-- `tf.data` pipeline (`.cache().shuffle().batch().prefetch()`) required —
-  not optional — to keep the GPU fed without CPU-side bottlenecks.
+- Trained locally on an RTX 3050 (4GB VRAM) via WSL2 + CUDA — native
+  Windows TensorFlow dropped GPU support after 2.10.
+- Backbone: EfficientNetB0, chosen over MobileNetV3 based on deployment
+  target (server-side inference, not on-device) and domain precedent
+  (EfficientNet dominates published APTOS/EyePACS solutions).
+- Batch size 16; `tf.data` pipeline required to keep the GPU fed.
 
-## Project Roadmap
+## Project Status
 
-- [x] **Phase 1 — EDA** (`01_eda.ipynb`): integrity, imbalance, image
-      properties, blur, color — complete, see summary above
-- [x] **Phase 2 — Preprocessing pipeline** (`02_preprocess.ipynb`):
-      border cropping, pad-to-square, 224×224 resize, CLAHE, conservative augmentation,
-      `tf.data` pipeline, batch validation, and class-weight computation
-- [ ] **Phase 3 — Baseline training** (`03_baseline_training.ipynb`):
-      transfer learning with EfficientNetB0/MobileNetV3, frozen backbone →
-      fine-tune
-- [ ] **Phase 4 — Imbalance experiments** (`04_class_imbalance_experiments.ipynb`):
-      compare class weights vs. focal loss vs. augmentation-based approaches
-- [ ] **Phase 5 — Evaluation** (`05_evaluation_analysis.ipynb`): QWK,
-      confusion matrix, per-class recall, referral-threshold analysis
-      (binary refer/no-refer framing)
-- [ ] **Phase 6 — Interpretability** (`06_gradcam_interpretability.ipynb`):
-      Grad-CAM overlays; explicitly check whether predictions correlate with
-      real lesions vs. overall image blur/haze
-- [ ] **Phase 7 — Deployment** (`07_final_model_export.ipynb` + Streamlit/HF
-      Space): upload image → grade + Grad-CAM overlay + referral flag
+- [x] EDA — data integrity, imbalance, image properties, blur, color
+- [x] Preprocessing pipeline — cropping, resize, CLAHE, `tf.data`, augmentation
+- [x] Baseline training — two-phase transfer learning, QWK 0.826
+- [x] Class imbalance ablation — oversampling vs. class weights, QWK 0.854
+- [x] Interpretability — Grad-CAM, two distinct failure modes identified
+- [x] Deployment — Streamlit demo with referral flag and limitation disclosure
 
-## Known Limitations
+## Known Limitations & Future Work
 
-- No patient-ID metadata available — cross-session/patient leakage beyond
-  exact-duplicate images cannot be fully verified.
-- Exact-duplicate detection (MD5 hashing) does not catch near-duplicates
-  (same eye re-photographed with different compression/crop/rotation).
-- Resize step discards more relative detail from the highest-resolution
-  images than the lowest.
+- No patient-ID metadata — cross-session leakage beyond exact duplicates
+  can't be fully verified.
+- Oversampling adds exposure, not new information — a real ceiling on how
+  much it can help rare-class recall.
+- Two persistent Grade 4→Grade 0 shortcut failures remain unexplained by
+  blur; likely candidates for future investigation: attention supervision,
+  contrastive learning on hard negatives, or targeted acquisition of more
+  real (not duplicated) Grade 3/4 images from a compatible-scale dataset
+  (e.g. IDRiD).
+- A domain-generalization extension (training/evaluating across multiple
+  DR datasets, as in benchmarks like GDRBench) was considered and
+  deliberately scoped out — a legitimate but substantially larger research
+  direction, better suited to a dedicated follow-up project.
