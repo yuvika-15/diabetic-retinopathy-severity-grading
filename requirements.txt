@@ -1,28 +1,5 @@
-
-# --- Core ML / deep learning ---
-# GPU support (WSL2 + CUDA) was set up separately via:
-#   pip install tensorflow[and-cuda]
-# On a CPU-only machine, plain `tensorflow` below is enough for the
-# notebooks to run (slower, but correct) — training just won't use the GPU.
-tensorflow==2.21.*
-scikit-learn
-
-# --- Data handling ---
+streamlit
+tensorflow-cpu
+opencv-python-headless
 numpy
 pandas
-
-# --- Image processing ---
-opencv-python
-pillow
-
-# --- Visualization ---
-matplotlib
-seaborn
-
-# --- Notebook environment ---
-jupyter
-ipykernel
-nbformat
-
-# --- Deployment demo (see requirements-app.txt for a minimal CPU-only version) ---
-streamlit
