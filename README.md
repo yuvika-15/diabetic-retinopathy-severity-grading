@@ -6,7 +6,7 @@ investigate whether the model is looking at real lesions or confounding
 image properties — framed as a clinical triage system (refer / no-refer),
 not just a 5-class classifier.
 
-**[Live demo](#)** — replace with your deployed Streamlit/HF Spaces link
+**[Live demo](https://diabetic-retinopathy-severity-grading.streamlit.app/)** 
 
 ![Demo screenshot](outputs/figures/demo_result.png)
 
