@@ -9,7 +9,6 @@ not just a 5-class classifier.
 **[Live demo](#)** — replace with your deployed Streamlit/HF Spaces link
 
 ![Demo screenshot](outputs/figures/demo_result.png)
-![Demo screenshot](outputs/figures/demo_result_2.png)
 
 ## Problem
 
@@ -120,14 +119,14 @@ Documented as a deliberately tested, ruled-out hypothesis.
 **Pipeline:** `crop black border → pad to square → resize to 224×224 →
 CLAHE → BGR→RGB → EfficientNet input scaling`
 
-![Full pipeline before/after](outputs/figures/full_pipeline_before_after.png)
+![Full pipeline before/after](outputs/figures/04_full_pipeline_before_after.png)
 
 - **Crop + pad-to-square** instead of center-crop or stretch — preserves
   all real tissue and avoids distorting the circular retina.
 - **CLAHE** tested visually and retained — improved vessel/lesion contrast
   without amplifying noise in the black background.
 
-![CLAHE before/after](outputs/figures/clahe_before_after.png)
+![CLAHE before/after](outputs/figures/05_clahe_before_after.png)
 
 - **`tf.data` pipeline:** `load/process → cache → shuffle (train) → batch →
   augment (train) → prefetch`. Caching sits before augmentation so
@@ -261,7 +260,7 @@ overlay → predicted grade + class probabilities → referral flag → a
 plain-language interpretation that explicitly surfaces the model's known
 limitation on high-confidence "No DR" predictions.
 
-![Upload interface](outputs/figures/demo_screenshot_upload.png)
+![Demo screenshot](outputs/figures/demo_result_2.png)
 
 Run locally: `streamlit run app.py`. Deployable free on Streamlit Community
 Cloud or Hugging Face Spaces (CPU-only hosting works fine — mixed precision
