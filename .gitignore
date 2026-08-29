@@ -1,6 +1,6 @@
 archive/
 *.png
-!outputs/figures/*.png
+!outputs/*.png
 __pycache__/
 .ipynb_checkpoints/
 *.pyc
